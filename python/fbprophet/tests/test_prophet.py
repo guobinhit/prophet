@@ -1,9 +1,7 @@
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# Copyright (c) Facebook, Inc. and its affiliates.
+
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import
 from __future__ import division
@@ -320,7 +318,7 @@ class TestProphet(TestCase):
             'upper_window': [1] * 2,
             'prior_scale': [8] * 2,
         })
-        holidays2 = pd.concat((holidays, holidays2))
+        holidays2 = pd.concat((holidays, holidays2), sort=True)
         m = Prophet(holidays=holidays2)
         feats, priors, names = m.make_holiday_features(df['ds'], m.holidays)
         pn = zip(priors, [s.split('_delim_')[0] for s in feats.columns])
@@ -332,7 +330,7 @@ class TestProphet(TestCase):
             'lower_window': [0] * 2,
             'upper_window': [1] * 2,
         })
-        holidays2 = pd.concat((holidays, holidays2))
+        holidays2 = pd.concat((holidays, holidays2), sort=True)
         feats, priors, names = Prophet(
             holidays=holidays2, holidays_prior_scale=4
         ).make_holiday_features(df['ds'], holidays2)
@@ -559,6 +557,12 @@ class TestProphet(TestCase):
         with self.assertRaises(ValueError):
             m.add_seasonality(name='trend', period=30, fourier_order=5)
         m.add_seasonality(name='weekly', period=30, fourier_order=5)
+        # Test fourier order <= 0
+        m = Prophet()
+        with self.assertRaises(ValueError):
+            m.add_seasonality(name='weekly', period=7, fourier_order=0)
+        with self.assertRaises(ValueError):
+            m.add_seasonality(name='weekly', period=7, fourier_order=-1)
         # Test priors
         m = Prophet(
             holidays=holidays, yearly_seasonality=False,

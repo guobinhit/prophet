@@ -1,9 +1,7 @@
-## Copyright (c) 2017-present, Facebook, Inc.
-## All rights reserved.
+# Copyright (c) Facebook, Inc. and its affiliates.
 
-## This source code is licensed under the BSD-style license found in the
-## LICENSE file in the root directory of this source tree. An additional grant
-## of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 ## Makes R CMD CHECK happy due to dplyr syntax below
 globalVariables(c(
@@ -393,6 +391,9 @@ setup_dataframe <- function(m, df, initialize_scales = FALSE) {
     if (!(exists('cap', where=df))) {
       stop('Capacities must be supplied for logistic growth.')
     }
+    if (any(df$cap <= df$floor)) {
+      stop('cap must be greater than floor (which defaults to 0).')
+    }
     df <- df %>%
       dplyr::mutate(cap_scaled = (cap - floor) / m$y.scale)
   }
@@ -688,6 +689,11 @@ add_regressor <- function(
   if (!is.null(m$history)) {
     stop('Regressors must be added prior to model fitting.')
   }
+  if (make.names(name, allow_ = TRUE) != name) {
+    stop("You have provided a name that is not syntactically valid in R, ", name, ". ",
+         "A syntactically valid name consists of letters, numbers and the dot or underline, ",
+         "characters and starts with a letter or the dot not followed by a number.")
+  }
   validate_column_name(m, name, check_regressors = FALSE)
   if (is.null(prior.scale)) {
     prior.scale <- m$holidays.prior.scale
@@ -696,7 +702,7 @@ add_regressor <- function(
     mode <- m$seasonality.mode
   }
   if(prior.scale <= 0) {
-    stop("Prior scale must be > 0")
+    stop("Prior scale must be > 0.")
   }
   if (!(mode %in% c('additive', 'multiplicative'))) {
     stop("mode must be 'additive' or 'multiplicative'")
@@ -751,6 +757,11 @@ add_seasonality <- function(
   }
   if (!(name %in% c('daily', 'weekly', 'yearly'))) {
     # Allow overriding built-in seasonalities
+    if (make.names(name, allow_ = TRUE) != name) {
+      stop("You have provided a name that is not syntactically valid in R, ", name, ". ",
+           "A syntactically valid name consists of letters, numbers and the dot or underline, ",
+           "characters and starts with a letter or the dot not followed by a number.")
+    }
     validate_column_name(m, name, check_seasonalities = FALSE)
   }
   if (is.null(prior.scale)) {
@@ -759,7 +770,10 @@ add_seasonality <- function(
     ps <- prior.scale
   }
   if (ps <= 0) {
-    stop('Prior scale must be > 0')
+    stop('Prior scale must be > 0.')
+  }
+  if (fourier.order <= 0) {
+    stop('Fourier order must be > 0.')
   }
   if (is.null(mode)) {
     mode <- m$seasonality.mode
@@ -1257,11 +1271,19 @@ fit.prophet <- function(m, df, ...) {
       object = model,
       data = dat,
       init = stan_init,
+      algorithm = if(dat$T < 100) {'Newton'} else {'LBFGS'},
       iter = 1e4,
       as_vector = FALSE
     )
     args <- utils::modifyList(args, list(...))
     stan.fit <- do.call(rstan::optimizing, args)
+    if (stan.fit$return_code != 0) {
+      message(
+        'Optimization terminated abnormally. Falling back to Newton optimizer.'
+      )
+      args$algorithm = 'Newton'
+      stan.fit <- do.call(rstan::optimizing, args)
+    }
     m$params <- stan.fit$par
     n.iteration <- 1
   }
@@ -1305,6 +1327,9 @@ fit.prophet <- function(m, df, ...) {
 #'
 #' @export
 predict.prophet <- function(object, df = NULL, ...) {
+  if (is.null(object$history)) {
+    stop("Model must be fit before predictions can be made.")
+  }
   if (is.null(df)) {
     df <- object$history
   } else {

@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# Copyright (c) Facebook, Inc. and its affiliates.
+
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import, division, print_function
 
@@ -42,8 +40,10 @@ def generate_cutoffs(df, horizon, initial, period):
         # If data does not exist in data range (cutoff, cutoff + horizon]
         if not (((df['ds'] > cutoff) & (df['ds'] <= cutoff + horizon)).any()):
             # Next cutoff point is 'last date before cutoff in data - horizon'
-            closest_date = df[df['ds'] <= cutoff].max()['ds']
-            cutoff = closest_date - horizon
+            if cutoff > df['ds'].min():
+                closest_date = df[df['ds'] <= cutoff].max()['ds']
+                cutoff = closest_date - horizon
+            # else no data left, leave cutoff as is, it will be dropped.
         result.append(cutoff)
     result = result[:-1]
     if len(result) == 0:
@@ -82,11 +82,24 @@ def cross_validation(model, horizon, period=None, initial=None):
     A pd.DataFrame with the forecast, actual value and cutoff.
     """
     df = model.history.copy().reset_index(drop=True)
-    te = df['ds'].max()
-    ts = df['ds'].min()
     horizon = pd.Timedelta(horizon)
+    # Set period
     period = 0.5 * horizon if period is None else pd.Timedelta(period)
-    initial = 3 * horizon if initial is None else pd.Timedelta(initial)
+    # Identify largest seasonality period
+    period_max = 0.
+    for s in model.seasonalities.values():
+        period_max = max(period_max, s['period'])
+    seasonality_dt = pd.Timedelta(str(period_max) + ' days')
+    # Set initial
+    if initial is None:
+        initial = max(3 * horizon, seasonality_dt)
+    else:
+        initial = pd.Timedelta(initial)
+        if initial < seasonality_dt:
+            msg = 'Seasonality has period of {} days '.format(period_max)
+            msg += 'which is larger than initial window. '
+            msg += 'Consider increasing initial.'
+            logger.warning(msg)
 
     cutoffs = generate_cutoffs(df, horizon, initial, period)
     predicts = []
@@ -123,7 +136,7 @@ def cross_validation(model, horizon, period=None, initial=None):
         ], axis=1))
 
     # Combine all predicted pd.DataFrame into one pd.DataFrame
-    return reduce(lambda x, y: x.append(y), predicts).reset_index(drop=True)
+    return pd.concat(predicts, axis=0).reset_index(drop=True)
 
 def prophet_copy(m, cutoff=None):
     """Copy Prophet object
@@ -190,14 +203,18 @@ def performance_metrics(df, metrics=None, rolling_window=0.1):
     `metrics` argument.
 
     Metrics are calculated over a rolling window of cross validation
-    predictions, after sorting by horizon. The size of that window (number of
-    simulated forecast points) is determined by the rolling_window argument,
-    which specifies a proportion of simulated forecast points to include in
-    each window. rolling_window=0 will compute it separately for each simulated
-    forecast point (i.e., 'mse' will actually be squared error with no mean).
-    The default of rolling_window=0.1 will use 10% of the rows in df in each
-    window. rolling_window=1 will compute the metric across all simulated forecast
-    points. The results are set to the right edge of the window.
+    predictions, after sorting by horizon. Averaging is first done within each
+    value of horizon, and then across horizons as needed to reach the window
+    size. The size of that window (number of simulated forecast points) is
+    determined by the rolling_window argument, which specifies a proportion of
+    simulated forecast points to include in each window. rolling_window=0 will
+    compute it separately for each horizon. The default of rolling_window=0.1
+    will use 10% of the rows in df in each window. rolling_window=1 will
+    compute the metric across all simulated forecast points. The results are
+    set to the right edge of the window.
+
+    If rolling_window < 0, then metrics are computed at each datapoint with no
+    averaging (i.e., 'mse' will actually be squared error with no mean).
 
     The output is a dataframe containing column 'horizon' along with columns
     for each of the metrics computed.
@@ -208,13 +225,13 @@ def performance_metrics(df, metrics=None, rolling_window=0.1):
     metrics: A list of performance metrics to compute. If not provided, will
         use ['mse', 'rmse', 'mae', 'mape', 'coverage'].
     rolling_window: Proportion of data to use in each rolling window for
-        computing the metrics. Should be in [0, 1].
+        computing the metrics. Should be in [0, 1] to average
 
     Returns
     -------
     Dataframe with a column for each metric, and column 'horizon'
     """
-    valid_metrics = ['mse', 'rmse', 'mae', 'mape', 'coverage']
+    valid_metrics = ['mse', 'rmse', 'mae', 'mape', 'mdape', 'coverage']
     if metrics is None:
         metrics = valid_metrics
     if len(set(metrics)) != len(metrics):
@@ -226,42 +243,135 @@ def performance_metrics(df, metrics=None, rolling_window=0.1):
     df_m = df.copy()
     df_m['horizon'] = df_m['ds'] - df_m['cutoff']
     df_m.sort_values('horizon', inplace=True)
-    # Window size
+    if 'mape' in metrics and df_m['y'].abs().min() < 1e-8:
+        logger.info('Skipping MAPE because y close to 0')
+        metrics.remove('mape')
+    if len(metrics) == 0:
+        return None
     w = int(rolling_window * df_m.shape[0])
-    w = max(w, 1)
-    w = min(w, df_m.shape[0])
-    cols = ['horizon']
+    if w >= 0:
+        w = max(w, 1)
+        w = min(w, df_m.shape[0])
+    # Compute all metrics
+    dfs = {}
     for metric in metrics:
-        df_m[metric] = eval(metric)(df_m, w)
-        cols.append(metric)
-    df_m = df_m[cols]
-    return df_m.dropna()
+        dfs[metric] = eval(metric)(df_m, w)
+    res = dfs[metrics[0]]
+    for i in range(1, len(metrics)):
+        res_m = dfs[metrics[i]]
+        assert np.array_equal(res['horizon'].values, res_m['horizon'].values)
+        res[metrics[i]] = res_m[metrics[i]]
+    return res
 
 
-def rolling_mean(x, w):
-    """Compute a rolling mean of x
+def rolling_mean_by_h(x, h, w, name):
+    """Compute a rolling mean of x, after first aggregating by h.
 
-    Right-aligned. Padded with NaNs on the front so the output is the same
-    size as x.
+    Right-aligned. Computes a single mean for each unique value of h. Each
+    mean is over at least w samples.
 
     Parameters
     ----------
     x: Array.
+    h: Array of horizon for each value in x.
     w: Integer window size (number of elements).
+    name: Name for metric in result dataframe
 
     Returns
     -------
-    Rolling mean of x with window size w.
+    Dataframe with columns horizon and name, the rolling mean of x.
     """
-    s = np.cumsum(np.insert(x, 0, 0))
-    prefix = np.empty(w - 1)
-    prefix.fill(np.nan)
-    return np.hstack((prefix, (s[w:] - s[:-w]) / float(w)))  # right-aligned
+    # Aggregate over h
+    df = pd.DataFrame({'x': x, 'h': h})
+    df2 = (
+        df.groupby('h').agg(['mean', 'count']).reset_index().sort_values('h')
+    )
+    xm = df2['x']['mean'].values
+    ns = df2['x']['count'].values
+    hs = df2['h'].values
+
+    res_h = []
+    res_x = []
+    # Start from the right and work backwards
+    i = len(hs) - 1
+    while i >= 0:
+        # Construct a mean of at least w samples.
+        n = int(ns[i])
+        xbar = float(xm[i])
+        j = i - 1
+        while ((n < w) and j >= 0):
+            # Include points from the previous horizon. All of them if still
+            # less than w, otherwise just enough to get to w.
+            n2 = min(w - n, ns[j])
+            xbar = xbar * (n / (n + n2)) + xm[j] * (n2 / (n + n2))
+            n += n2
+            j -= 1
+        if n < w:
+            # Ran out of horizons before enough points.
+            break
+        res_h.append(hs[i])
+        res_x.append(xbar)
+        i -= 1
+    res_h.reverse()
+    res_x.reverse()
+    return pd.DataFrame({'horizon': res_h, name: res_x})
+
+
+def rolling_median_by_h(x, h, w, name):
+    """Compute a rolling median of x, after first aggregating by h.
+
+    Right-aligned. Computes a single median for each unique value of h. Each
+    median is over at least w samples.
+
+    For each h where there are fewer than w samples, we take samples from the previous h,
+    moving backwards. (In other words, we ~ assume that the x's are shuffled within each h.)
+
+    Parameters
+    ----------
+    x: Array.
+    h: Array of horizon for each value in x.
+    w: Integer window size (number of elements).
+    name: Name for metric in result dataframe
+
+    Returns
+    -------
+    Dataframe with columns horizon and name, the rolling median of x.
+    """
+    # Aggregate over h
+    df = pd.DataFrame({'x': x, 'h': h})
+    grouped = df.groupby('h')
+    df2 = grouped.size().reset_index().sort_values('h')
+    hs = df2['h']
+
+    res_h = []
+    res_x = []
+    # Start from the right and work backwards
+    i = len(hs) - 1
+    while i >= 0:
+        h_i = hs[i]
+        xs = grouped.get_group(h_i).x.tolist()
+
+        # wrap in array so this works if h is pandas Series with custom index or numpy array
+        next_idx_to_add = np.array(h == h_i).argmax() - 1
+        while (len(xs) < w) and (next_idx_to_add >= 0):
+            # Include points from the previous horizon. All of them if still
+            # less than w, otherwise just enough to get to w.
+            xs.append(x[next_idx_to_add])
+            next_idx_to_add -= 1
+        if len(xs) < w:
+            # Ran out of points before getting enough.
+            break
+        res_h.append(hs[i])
+        res_x.append(np.median(xs))
+        i -= 1
+    res_h.reverse()
+    res_x.reverse()
+    return pd.DataFrame({'horizon': res_h, name: res_x})
 
 
 # The functions below specify performance metrics for cross-validation results.
 # Each takes as input the output of cross_validation, and returns the statistic
-# as an array, given a window size for rolling aggregation.
+# as a dataframe, given a window size for rolling aggregation.
 
 
 def mse(df, w):
@@ -274,10 +384,14 @@ def mse(df, w):
 
     Returns
     -------
-    Array of mean squared errors.
+    Dataframe with columns horizon and mse.
     """
     se = (df['y'] - df['yhat']) ** 2
-    return rolling_mean(se.values, w)
+    if w < 0:
+        return pd.DataFrame({'horizon': df['horizon'], 'mse': se})
+    return rolling_mean_by_h(
+        x=se.values, h=df['horizon'].values, w=w, name='mse'
+    )
 
 
 def rmse(df, w):
@@ -290,9 +404,12 @@ def rmse(df, w):
 
     Returns
     -------
-    Array of root mean squared errors.
+    Dataframe with columns horizon and rmse.
     """
-    return np.sqrt(mse(df, w))
+    res = mse(df, w)
+    res['mse'] = np.sqrt(res['mse'])
+    res.rename({'mse': 'rmse'}, axis='columns', inplace=True)
+    return res
 
 
 def mae(df, w):
@@ -305,10 +422,14 @@ def mae(df, w):
 
     Returns
     -------
-    Array of mean absolute errors.
+    Dataframe with columns horizon and mae.
     """
     ae = np.abs(df['y'] - df['yhat'])
-    return rolling_mean(ae.values, w)
+    if w < 0:
+        return pd.DataFrame({'horizon': df['horizon'], 'mae': ae})
+    return rolling_mean_by_h(
+        x=ae.values, h=df['horizon'].values, w=w, name='mae'
+    )
 
 
 def mape(df, w):
@@ -321,10 +442,34 @@ def mape(df, w):
 
     Returns
     -------
-    Array of mean absolute percent errors.
+    Dataframe with columns horizon and mape.
     """
     ape = np.abs((df['y'] - df['yhat']) / df['y'])
-    return rolling_mean(ape.values, w)
+    if w < 0:
+        return pd.DataFrame({'horizon': df['horizon'], 'mape': ape})
+    return rolling_mean_by_h(
+        x=ape.values, h=df['horizon'].values, w=w, name='mape'
+    )
+
+
+def mdape(df, w):
+    """Median absolute percent error
+
+    Parameters
+    ----------
+    df: Cross-validation results dataframe.
+    w: Aggregation window size.
+
+    Returns
+    -------
+    Dataframe with columns horizon and mdape.
+    """
+    ape = np.abs((df['y'] - df['yhat']) / df['y'])
+    if w < 0:
+        return pd.DataFrame({'horizon': df['horizon'], 'mdape': ape})
+    return rolling_median_by_h(
+        x=ape.values, h=df['horizon'], w=w, name='mdape'
+    )
 
 
 def smape(df, w):
@@ -337,10 +482,14 @@ def smape(df, w):
 
     Returns
     -------
-    Array of symmetric mean absolute percent errors.
+    Dataframe with columns horizon and smape.
     """
     sape = np.abs(df['yhat']-df['y']) / ((np.abs(df['y']) + np.abs(df['yhat'])) /2)
-    return rolling_mean(sape.values, w)
+    if w < 0:
+        return pd.DataFrame({'horizon': df['horizon'], 'smape': sape})
+    return rolling_mean_by_h(
+        x=sape.values, h=df['horizon'].values, w=w, name='smape'
+    )
 
 
 def coverage(df, w):
@@ -353,7 +502,11 @@ def coverage(df, w):
 
     Returns
     -------
-    Array of coverages.
+    Dataframe with columns horizon and coverage.
     """
     is_covered = (df['y'] >= df['yhat_lower']) & (df['y'] <= df['yhat_upper'])
-    return rolling_mean(is_covered.values, w)
+    if w < 0:
+        return pd.DataFrame({'horizon': df['horizon'], 'coverage': is_covered})
+    return rolling_mean_by_h(
+        x=is_covered.values, h=df['horizon'].values, w=w, name='coverage'
+    )

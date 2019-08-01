@@ -1,3 +1,8 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
 library(prophet)
 context("Prophet tests")
 
@@ -81,6 +86,18 @@ test_that("setup_dataframe", {
 
   expect_true('y_scaled' %in% colnames(history))
   expect_equal(max(history$y_scaled), 1)
+})
+
+test_that("setup_names_errors", {
+  m <- prophet()
+  expect_error(
+    m <- add_seasonality(m, "3monthly"),
+    "You have provided a name that is not syntactically valid in R, 3monthly"
+  )
+  expect_error(
+    m <- add_regressor(m, "2monthsale"),
+    "You have provided a name that is not syntactically valid in R, 2monthsale"
+  )
 })
 
 test_that("logistic_floor", {
@@ -425,11 +442,9 @@ test_that("auto_weekly_seasonality", {
   train.w <- DATA[1:N.w, ]
   m <- prophet(train.w)
   expect_false('weekly' %in% names(m$seasonalities))
-  expect_warning({
-    # prophet warning: non-zero return code in optimizing
-    m <- prophet(train.w, weekly.seasonality = TRUE)
-    expect_true('weekly' %in% names(m$seasonalities))
-  })
+  # prophet warning: non-zero return code in optimizing
+  m <- prophet(train.w, weekly.seasonality = TRUE)
+  expect_true('weekly' %in% names(m$seasonalities))
   # Should be False due to weekly spacing
   train.w <- DATA[seq(1, nrow(DATA), 7), ]
   m <- prophet(train.w)
@@ -518,6 +533,10 @@ test_that("custom_seasonality", {
                          holiday = c('special_day'),
                          prior_scale = c(4))
   m <- prophet(holidays=holidays)
+  expect_error(
+    add_seasonality(m, name="incorrect.fourier.order", period=30, fourier.order=-10),
+    "Fourier order must be > 0."
+  )
   m <- add_seasonality(m, name='monthly', period=30, fourier.order=5)
   true <- list(
     period = 30, fourier.order = 5, prior.scale = 10, mode = 'additive',
@@ -526,10 +545,12 @@ test_that("custom_seasonality", {
     expect_equal(m$seasonalities$monthly[[name]], true[[name]])
   }
   expect_error(
-    add_seasonality(m, name='special_day', period=30, fourier_order=5)
+    add_seasonality(m, name='special_day', period=30, fourier.order=5),
+    "already used for a holiday."
   )
   expect_error(
-    add_seasonality(m, name='trend', period=30, fourier_order=5)
+    add_seasonality(m, name='trend', period=30, fourier.order=5),
+    "is reserved."
   )
   m <- add_seasonality(m, name='weekly', period=30, fourier.order=5)
   # Test priors

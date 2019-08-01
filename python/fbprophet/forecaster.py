@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# Copyright (c) Facebook, Inc. and its affiliates.
+
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import, division, print_function
 
@@ -129,7 +127,7 @@ class Prophet(object):
         self.logistic_floor = False
         self.t_scale = None
         self.changepoints_t = None
-        self.seasonalities = {}
+        self.seasonalities = OrderedDict({})
         self.extra_regressors = OrderedDict({})
         self.country_holidays = None
         self.stan_fit = None
@@ -236,7 +234,14 @@ class Prophet(object):
             df['y'] = pd.to_numeric(df['y'])
             if np.isinf(df['y'].values).any():
                 raise ValueError('Found infinity in column y.')
+        if df['ds'].dtype == np.int64:
+            df['ds'] = df['ds'].astype(str)
         df['ds'] = pd.to_datetime(df['ds'])
+        if df['ds'].dt.tz is not None:
+            raise ValueError(
+                'Column ds has timezone specified, which is not supported. '
+                'Remove timezone.'
+            )
         if df['ds'].isnull().any():
             raise ValueError('Found NaN in column ds.')
         for name in self.extra_regressors:
@@ -271,6 +276,10 @@ class Prophet(object):
                 raise ValueError(
                     "Capacities must be supplied for logistic growth in "
                     "column 'cap'"
+                )
+            if (df['cap'] <= df['floor']).any():
+                raise ValueError(
+                    'cap must be greater than floor (which defaults to 0).'
                 )
             df['cap_scaled'] = (df['cap'] - df['floor']) / self.y_scale
 
@@ -343,8 +352,8 @@ class Prophet(object):
         else:
             # Place potential changepoints evenly through first
             # changepoint_range proportion of the history
-            hist_size = np.floor(
-                self.history.shape[0] * self.changepoint_range)
+            hist_size = int(np.floor(
+                self.history.shape[0] * self.changepoint_range))
             if self.n_changepoints + 1 > hist_size:
                 self.n_changepoints = hist_size - 1
                 logger.info(
@@ -638,6 +647,8 @@ class Prophet(object):
             ps = float(prior_scale)
         if ps <= 0:
             raise ValueError('Prior scale must be > 0')
+        if fourier_order <= 0:
+            raise ValueError('Fourier Order must be > 0')
         if mode is None:
             mode = self.seasonality_mode
         if mode not in ['additive', 'multiplicative']:
@@ -1112,6 +1123,7 @@ class Prophet(object):
             args = dict(
                 data=dat,
                 init=stan_init,
+                algorithm='Newton' if dat['T'] < 100 else 'LBFGS',
                 iter=1e4,
             )
             args.update(kwargs)
@@ -1119,6 +1131,9 @@ class Prophet(object):
                 params = model.optimizing(**args)
             except RuntimeError:
                 # Fall back on Newton
+                logger.warning(
+                    'Optimization terminated abnormally. Falling back to Newton.'
+                )
                 args['algorithm'] = 'Newton'
                 params = model.optimizing(**args)
 
@@ -1146,6 +1161,9 @@ class Prophet(object):
         -------
         A pd.DataFrame with the forecast components.
         """
+        if self.history is None:
+            raise Exception('Model must be fit before predictions can be made.')
+
         if df is None:
             df = self.history.copy()
         else:
@@ -1482,7 +1500,7 @@ class Prophet(object):
         return pd.DataFrame({'ds': dates})
 
     def plot(self, fcst, ax=None, uncertainty=True, plot_cap=True, xlabel='ds',
-             ylabel='y'):
+             ylabel='y', figsize=(10, 6)):
         """Plot the Prophet forecast.
 
         Parameters
@@ -1494,6 +1512,7 @@ class Prophet(object):
             in the figure, if available.
         xlabel: Optional label name on X-axis
         ylabel: Optional label name on Y-axis
+        figsize: Optional tuple width, height in inches.
 
         Returns
         -------
@@ -1502,10 +1521,11 @@ class Prophet(object):
         return plot(
             m=self, fcst=fcst, ax=ax, uncertainty=uncertainty,
             plot_cap=plot_cap, xlabel=xlabel, ylabel=ylabel,
+            figsize=figsize
         )
 
     def plot_components(self, fcst, uncertainty=True, plot_cap=True,
-                        weekly_start=0, yearly_start=0):
+                        weekly_start=0, yearly_start=0, figsize=None):
         """Plot the Prophet forecast components.
 
         Will plot whichever are available of: trend, holidays, weekly
@@ -1523,6 +1543,7 @@ class Prophet(object):
         yearly_start: Optional int specifying the start day of the yearly
             seasonality plot. 0 (default) starts the year on Jan 1. 1 shifts
             by 1 day to Jan 2, and so on.
+        figsize: Optional tuple width, height in inches.
 
         Returns
         -------
@@ -1531,4 +1552,5 @@ class Prophet(object):
         return plot_components(
             m=self, fcst=fcst, uncertainty=uncertainty, plot_cap=plot_cap,
             weekly_start=weekly_start, yearly_start=yearly_start,
+            figsize=figsize
         )

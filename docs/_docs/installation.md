@@ -16,11 +16,11 @@ Prophet has two implementations: [R](#installation-in-r) and [Python](#installat
 
 ## Installation in R
 
-Prophet is a [CRAN package](https://cran.r-project.org/package=prophet) and you can use `install.packages`:
+Prophet is a [CRAN package](https://cran.r-project.org/package=prophet) and you can use `install.packages`. For OSX, be sure to choose a source install:
 
 ```
 # R
-> install.packages('prophet')
+> install.packages('prophet', type="source")
 ```
 
 After installation, you can [get started!](quick_start.html#r-api)
@@ -48,7 +48,7 @@ After installation, you can [get started!](quick_start.html#python-api)
 
 ### Windows
 
-On Windows, PyStan requires a compiler so you'll need to [follow the instructions](http://pystan.readthedocs.io/en/latest/windows.html).  The key step is installing a recent [C++ compiler](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+On Windows, PyStan requires a compiler so you'll need to [follow the instructions](http://pystan.readthedocs.io/en/latest/windows.html).  The easiest way to install Prophet in Windows is in Anaconda.
 
 ### Linux
 

@@ -16,15 +16,14 @@ Prophet is [open source software](https://code.facebook.com/projects/) released 
 - Prophet Python package: https://pypi.python.org/pypi/fbprophet/
 - Release blogpost: https://research.fb.com/prophet-forecasting-at-scale/
 - Prophet paper: Sean J. Taylor, Benjamin Letham (2018) Forecasting at scale. The American Statistician 72(1):37-45 (https://peerj.com/preprints/3190.pdf).
-- Ask user questions on stackoverflow: https://stackoverflow.com/questions/tagged/facebook-prophet
 
 ## Installation in R
 
-Prophet is a [CRAN package](https://cran.r-project.org/package=prophet) so you can use `install.packages`:
+Prophet is a [CRAN package](https://cran.r-project.org/package=prophet) so you can use `install.packages`. For OSX, be sure to specify a source install:
 
 ```
 # R
-> install.packages('prophet')
+> install.packages('prophet', type="source")
 ```
 
 After installation, you can [get started!](https://facebook.github.io/prophet/docs/quick_start.html#r-api)
@@ -50,19 +49,26 @@ After installation, you can [get started!](https://facebook.github.io/prophet/do
 
 If you upgrade the version of PyStan installed on your system, you may need to reinstall fbprophet ([see here](https://github.com/facebook/prophet/issues/324)).
 
+### Anaconda
+
+Use `conda install gcc` to set up gcc. The easiest way to install Prophet is through conda-forge: `conda install -c conda-forge fbprophet`.
+
 ### Windows
 
-On Windows, PyStan requires a compiler so you'll need to [follow the instructions](http://pystan.readthedocs.io/en/latest/windows.html). The key step is installing a recent [C++ compiler](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+On Windows, PyStan requires a compiler so you'll need to [follow the instructions](http://pystan.readthedocs.io/en/latest/windows.html). The easiest way to install Prophet in Windows is in Anaconda.
 
 ### Linux
 
 Make sure compilers (gcc, g++, build-essential) and Python development tools (python-dev, python3-dev) are installed. In Red Hat systems, install the packages gcc64 and gcc64-c++. If you are using a VM, be aware that you will need at least 4GB of memory to install fbprophet, and at least 2GB of memory to use fbprophet.
 
-### Anaconda
-
-Use `conda install gcc` to set up gcc. The easiest way to install Prophet is through conda-forge: `conda install -c conda-forge fbprophet`.
-
 ## Changelog
+
+### Version 0.5 (2019.05.14)
+
+- Conditional seasonalities
+- Improved cross validation estimates
+- Plotly plot in Python
+- Bugfixes
 
 ### Version 0.4 (2018.12.18)
 
@@ -100,3 +106,7 @@ Use `conda install gcc` to set up gcc. The easiest way to install Prophet is thr
 ### Version 0.1 (2017.02.23)
 
 - Initial release
+
+## License
+
+Prophet is licensed under the [MIT license](LICENSE.md).

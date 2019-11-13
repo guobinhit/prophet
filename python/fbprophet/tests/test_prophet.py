@@ -55,6 +55,10 @@ class TestProphet(TestCase):
         forecaster.fit(train)
         forecaster.predict(future)
 
+        forecaster = Prophet(n_changepoints=0, mcmc_samples=100)
+        forecaster.fit(train)
+        forecaster.predict(future)
+
     def test_fit_changepoint_not_in_history(self):
         train = DATA[(DATA['ds'] < '2013-01-01') | (DATA['ds'] > '2014-01-01')]
         future = pd.DataFrame({'ds': DATA['ds']})
@@ -89,6 +93,18 @@ class TestProphet(TestCase):
         fcst = m.predict(future)
         self.assertEqual(fcst['yhat'].values[-1], 0)
 
+    def test_fit_predict_uncertainty_disabled(self):
+        N = DATA.shape[0]
+        train = DATA.head(N // 2)
+        future = DATA.tail(N // 2)
+
+        for uncertainty in [0, False]:
+            m = Prophet(uncertainty_samples=uncertainty)
+            m.fit(train)
+            fcst = m.predict(future)
+            expected_cols = ['ds', 'trend', 'additive_terms', 'multiplicative_terms', 'weekly', 'yhat']
+            self.assertTrue(all(col in expected_cols for col in fcst.columns.tolist()))
+
     def test_setup_dataframe(self):
         m = Prophet()
         N = DATA.shape[0]
@@ -102,6 +118,14 @@ class TestProphet(TestCase):
 
         self.assertTrue('y_scaled' in history)
         self.assertEqual(history['y_scaled'].max(), 1.0)
+    
+    def test_setup_dataframe_ds_column(self):
+        "Test case where 'ds' exists as an index name and column"
+        df = DATA.copy()
+        df.index = df.loc[:, 'ds']
+        m = Prophet()
+        m.fit(df)
+
 
     def test_logistic_floor(self):
         m = Prophet(growth='logistic')

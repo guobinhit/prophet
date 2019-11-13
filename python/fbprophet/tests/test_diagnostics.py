@@ -105,6 +105,16 @@ class TestDiagnostics(TestCase):
         self.assertAlmostEqual(
             ((df_cv1['yhat'] - df_cv2['yhat']) ** 2).sum(), 0.0)
 
+    def test_cross_validation_uncertainty_disabled(self):
+        df = self.__df.copy()
+        for uncertainty in [0, False]:
+            m = Prophet(uncertainty_samples=uncertainty)
+            m.fit(df)
+            df_cv = diagnostics.cross_validation(
+                m, horizon='4 days', period='4 days', initial='115 days')
+            expected_cols = ['ds', 'yhat', 'y', 'cutoff']
+            self.assertTrue(all(col in expected_cols for col in df_cv.columns.tolist()))
+
     def test_performance_metrics(self):
         m = Prophet()
         m.fit(self.__df)

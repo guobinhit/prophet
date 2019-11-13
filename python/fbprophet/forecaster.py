@@ -75,7 +75,8 @@ class Prophet(object):
         model. If mcmc.samples>0, this will be integrated over all model
         parameters, which will include uncertainty in seasonality.
     uncertainty_samples: Number of simulated draws used to estimate
-        uncertainty intervals.
+        uncertainty intervals. Settings this value to 0 or False will disable
+        uncertainty estimation and speed up the calculation.
     """
 
     def __init__(
@@ -261,8 +262,10 @@ class Prophet(object):
                     raise ValueError('Found non-boolean in column ' + condition_name)
                 df[condition_name] = df[condition_name].astype('bool')
 
+        if df.index.name == 'ds':
+            df.index.name = None
         df = df.sort_values('ds')
-        df.reset_index(inplace=True, drop=True)
+        df = df.reset_index(drop=True)
 
         self.initialize_scales(initialize_scales, df)
 
@@ -1113,9 +1116,9 @@ class Prophet(object):
                 iter=self.mcmc_samples,
             )
             args.update(kwargs)
-            stan_fit = model.sampling(**args)
-            for par in stan_fit.model_pars:
-                self.params[par] = stan_fit[par]
+            self.stan_fit = model.sampling(**args)
+            for par in self.stan_fit.model_pars:
+                self.params[par] = self.stan_fit[par]
                 # Shape vector parameters
                 if par in ['delta', 'beta'] and len(self.params[par].shape) < 2:
                     self.params[par] = self.params[par].reshape((-1, 1))
@@ -1128,23 +1131,23 @@ class Prophet(object):
             )
             args.update(kwargs)
             try:
-                params = model.optimizing(**args)
+                self.stan_fit = model.optimizing(**args)
             except RuntimeError:
                 # Fall back on Newton
                 logger.warning(
                     'Optimization terminated abnormally. Falling back to Newton.'
                 )
                 args['algorithm'] = 'Newton'
-                params = model.optimizing(**args)
+                self.stan_fit = model.optimizing(**args)
 
-            for par in params:
-                self.params[par] = params[par].reshape((1, -1))
+            for par in self.stan_fit:
+                self.params[par] = self.stan_fit[par].reshape((1, -1))
 
         # If no changepoints were requested, replace delta with 0s
         if len(self.changepoints) == 0:
             # Fold delta into the base rate k
-            self.params['k'] = self.params['k'] + self.params['delta']
-            self.params['delta'] = np.zeros(self.params['delta'].shape)
+            self.params['k'] = self.params['k'] + self.params['delta'].reshape(-1)
+            self.params['delta'] = np.zeros(self.params['delta'].shape).reshape((-1, 1))
 
         return self
 
@@ -1173,7 +1176,10 @@ class Prophet(object):
 
         df['trend'] = self.predict_trend(df)
         seasonal_components = self.predict_seasonal_components(df)
-        intervals = self.predict_uncertainty(df)
+        if self.uncertainty_samples:
+            intervals = self.predict_uncertainty(df)
+        else:
+            intervals = None
 
         # Drop columns except ds, cap, floor, and trend
         cols = ['ds', 'trend']
@@ -1289,8 +1295,9 @@ class Prophet(object):
         seasonal_features, _, component_cols, _ = (
             self.make_all_seasonality_features(df)
         )
-        lower_p = 100 * (1.0 - self.interval_width) / 2
-        upper_p = 100 * (1.0 + self.interval_width) / 2
+        if self.uncertainty_samples:
+            lower_p = 100 * (1.0 - self.interval_width) / 2
+            upper_p = 100 * (1.0 + self.interval_width) / 2
 
         X = seasonal_features.values
         data = {}
@@ -1301,12 +1308,13 @@ class Prophet(object):
             if component in self.component_modes['additive']:
                 comp *= self.y_scale
             data[component] = np.nanmean(comp, axis=1)
-            data[component + '_lower'] = np.nanpercentile(
-                comp, lower_p, axis=1,
-            )
-            data[component + '_upper'] = np.nanpercentile(
-                comp, upper_p, axis=1,
-            )
+            if self.uncertainty_samples:
+                data[component + '_lower'] = np.nanpercentile(
+                    comp, lower_p, axis=1,
+                )
+                data[component + '_upper'] = np.nanpercentile(
+                    comp, upper_p, axis=1,
+                )
         return pd.DataFrame(data)
 
     def sample_posterior_predictive(self, df):
